@@ -1,1 +1,1 @@
-pip install openai python-wordpress-xmlrpc
+pip install python-wordpress-xmlrpc

@@ -1,40 +1,43 @@
-import openai
-from wordpress_xmlrpc import Client, WordPressPost
-from wordpress_xmlrpc.methods.posts import NewPost
+import requests
+import pandas as pd
+import re
+from bs4 import BeautifulSoup
 
-# GPT-4 APIキーを設定
-openai.api_key = "your_openai_api_key"
+url="https://jra.jp/JRADB/accessS.html?CNAME=pw01sde1005202302090120230520/CB"
+response=requests.get(url)
 
-# キーワードを設定
-keyword = "your_keyword_here"
+soup=BeautifulSoup(response.content,'html.parser')
+header_tags=soup.find_all("th")
+data_tags=soup.find_all("td")
 
-# GPT-4でコンテンツを生成
-prompt = f"Write a blog post about {keyword}."
-response = openai.Completion.create(
-    engine="gpt-4",
-    prompt=prompt,
-    max_tokens=1024,
-    n=1,
-    stop=None,
-    temperature=0.7,
-)
+header=[tag.get("class")[0] for tag in header_tags if tag.get("class")]
 
-generated_content = response.choices[0].text.strip()
+data_html = ''.join(map(str, data_tags))
+records_html = re.split('<td class="place">', data_html)[1:]
 
-# WordPressの認証情報を設定
-wp_url = "your_wordpress_url/xmlrpc.php"
-wp_username = "your_wordpress_username"
-wp_password = "your_wordpress_password"
+df = pd.DataFrame()
 
-# WordPressクライアントを初期化
-wp_client = Client(wp_url, wp_username, wp_password)
+for record_html in records_html:
+    record_html = '<td class="place">' + record_html  # Add the splitting string back to each record
+    record_soup = BeautifulSoup(record_html, "html.parser")
+    record_tags = record_soup.find_all("td")
 
-# 新しい記事を作成
-post = WordPressPost()
-post.title = f"Blog post about {keyword}"
-post.content = generated_content
-post.post_status = "publish"  # 記事をすぐに公開する場合は 'publish'、下書きのままにする場合は 'draft'
+    data = {}
 
-# 記事をWordPressに投稿
-post_id = wp_client.call(NewPost(post))
-print(f"Post successfully published with ID: {post_id}")
+    for tag in record_tags:
+        if tag.get("class") and tag.get("class")[0] in header:
+            if tag.get("class")[0] == "waku" and tag.img and 'alt' in tag.img.attrs:
+                waku_number = re.findall(r'\d+', tag.img.attrs['alt'])
+                data[tag.get("class")[0]] = waku_number[0] if waku_number else None
+            elif tag.get("class")[0] == "corner":
+                corner_passes = tag.find_all("li")
+                if corner_passes and len(corner_passes) >= 2:
+                    data["corner_3"] = corner_passes[0].text.strip()
+                    data["corner_4"] = corner_passes[1].text.strip()
+            elif tag.get("class")[0] == "h_weight":
+                weight_data = tag.text.split('<span>')[0] if '<span>' in tag.text else tag.text
+                data[tag.get("class")[0]] = weight_data.strip()
+            else:
+                data[tag.get("class")[0]] = tag.text.strip()
+
+    df = df.append(data, ignore_index=True)
